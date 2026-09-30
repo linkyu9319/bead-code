@@ -14,6 +14,7 @@ from qr_bead_blueprint.core import (
     qr_version_from_size,
     verify_rendered_qr,
 )
+from qr_bead_blueprint.palettes import available_palettes, match_palette_pair
 from web_app import app, job_store
 
 
@@ -28,6 +29,19 @@ def test_qr_version_from_size() -> None:
 def test_rejects_low_contrast() -> None:
     with pytest.raises(ValueError, match="对比度"):
         BlueprintConfig(dark_color="#AAAAAA", light_color="#BBBBBB").validate()
+
+
+def test_palette_standards_resolve_to_purchase_codes() -> None:
+    palettes = dict(available_palettes())
+    assert set(palettes) == {"mard-221", "coco-291", "artkal-c-197"}
+
+    matches = [
+        match_palette_pair(key, "#07C160", "#FFFFFF")
+        for key in palettes
+    ]
+    assert all(match.dark.code and match.light.code for match in matches)
+    assert all(match.dark.hex.startswith("#") for match in matches)
+    assert len({(match.dark.code, match.dark.hex) for match in matches}) >= 2
 
 
 def test_end_to_end_conversion(tmp_path: Path) -> None:
@@ -52,6 +66,11 @@ def test_end_to_end_conversion(tmp_path: Path) -> None:
     assert (output / "blueprint.png").is_file()
     assert (output / "blueprint.pdf").is_file()
     assert (output / "materials.csv").is_file()
+
+    materials = (output / "materials.csv").read_text(encoding="utf-8-sig")
+    assert result.palette_title in materials
+    assert result.dark_code in materials
+    assert result.light_code in materials
 
     metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
     assert metadata["scan_verified"] is True
@@ -92,12 +111,16 @@ def test_web_generation_and_direct_downloads(tmp_path: Path) -> None:
                 "bead_size_mm": "5",
                 "dark_color": "#111827",
                 "light_color": "#FFFFFF",
+                "palette": "coco-291",
                 "compatibility_mode": "auto",
             },
         )
         assert response.status_code == 200
         body = response.json()
         assert body["summary"]["scan_verified"] is True
+        assert body["summary"]["palette_key"] == "coco-291"
+        assert body["summary"]["dark_code"]
+        assert body["summary"]["light_code"]
 
         blueprint = client.get(body["files"]["blueprint.png"])
         assert blueprint.status_code == 200

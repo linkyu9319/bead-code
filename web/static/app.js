@@ -66,6 +66,11 @@ function renderResult(data) {
     [summary.dark_beads.toLocaleString(), "深色拼豆"],
     [summary.light_beads.toLocaleString(), "浅色拼豆"],
   ].map(([value, label]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join("");
+  document.querySelector("#palette-summary").innerHTML = `
+    <strong>${summary.palette_title}</strong>
+    <span><i style="background:${summary.dark_hex}"></i>深色 ${summary.dark_code} · ${summary.dark_hex}</span>
+    <span><i style="background:${summary.light_hex}"></i>浅色 ${summary.light_code} · ${summary.light_hex}</span>
+  `;
   const warning = document.querySelector("#warning");
   warning.textContent = data.warning || "";
   warning.classList.toggle("hidden", !data.warning);

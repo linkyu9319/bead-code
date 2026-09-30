@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from qr_bead_blueprint import BlueprintConfig, QrDecodeError, convert_qr_to_blueprint
+from qr_bead_blueprint.palettes import PALETTE_FILES
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -147,11 +148,12 @@ async def generate_blueprint(
     bead_size_mm: float = Form(5.0),
     dark_color: str = Form("#111827"),
     light_color: str = Form("#FFFFFF"),
+    palette: str = Form("mard-221"),
     compatibility_mode: str = Form("auto"),
     allow_low_contrast: bool = Form(False),
 ) -> dict[str, object]:
     """接收二维码并生成图纸；原图在转换结束后立即删除，结果短期保留。"""
-    _validate_form(platform, compatibility_mode)
+    _validate_form(platform, compatibility_mode, palette)
     job_id, root = job_store.create()
     upload_path = root / "upload.bin"
 
@@ -164,6 +166,7 @@ async def generate_blueprint(
             bead_size_mm=bead_size_mm,
             dark_color=dark_color,
             light_color=light_color,
+            palette=palette,
             compatibility_mode=compatibility_mode,
             allow_low_contrast=allow_low_contrast,
         )
@@ -200,6 +203,12 @@ async def generate_blueprint(
             "light_beads": result.light_beads,
             "physical_size_cm": round(result.physical_size_mm / 10, 1),
             "scan_verified": result.scan_verified,
+            "palette_key": result.palette_key,
+            "palette_title": result.palette_title,
+            "dark_code": result.dark_code,
+            "light_code": result.light_code,
+            "dark_hex": result.dark_hex,
+            "light_hex": result.light_hex,
         },
         "files": {
             name: f"api/jobs/{job_id}/files/{name}"
@@ -254,6 +263,7 @@ def _convert_with_fallback(
     bead_size_mm: float,
     dark_color: str,
     light_color: str,
+    palette: str,
     compatibility_mode: str,
     allow_low_contrast: bool,
 ):
@@ -268,6 +278,7 @@ def _convert_with_fallback(
             bead_size_mm=bead_size_mm,
             dark_color=dark_color,
             light_color=light_color,
+            palette=palette,
             allow_low_contrast=allow_low_contrast,
             preserve_source_modules=mode == "preserve",
         )
@@ -281,9 +292,11 @@ def _convert_with_fallback(
     raise QrDecodeError(str(last_error or "二维码生成失败"))
 
 
-def _validate_form(platform: str, compatibility_mode: str) -> None:
+def _validate_form(platform: str, compatibility_mode: str, palette: str) -> None:
     if platform not in {"wechat", "alipay", "other"}:
         raise HTTPException(status_code=422, detail="不支持的二维码类型")
     if compatibility_mode not in {"auto", "clean", "preserve"}:
         raise HTTPException(status_code=422, detail="不支持的兼容模式")
+    if palette not in PALETTE_FILES:
+        raise HTTPException(status_code=422, detail="不支持的色号标准")
 

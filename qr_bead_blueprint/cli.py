@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .core import BlueprintConfig, QrDecodeError, convert_qr_to_blueprint
+from .palettes import PALETTE_FILES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bead-size-mm", type=float, default=5.0, help="拼豆直径，默认 5mm")
     parser.add_argument("--dark-color", default="#111827", help="深色拼豆颜色")
     parser.add_argument("--light-color", default="#FFFFFF", help="浅色拼豆颜色")
+    parser.add_argument(
+        "--palette",
+        choices=PALETTE_FILES,
+        default="mard-221",
+        help="实体拼豆色号标准，默认 MARD 221",
+    )
     parser.add_argument(
         "--allow-low-contrast",
         action="store_true",
@@ -55,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         bead_size_mm=args.bead_size_mm,
         dark_color=args.dark_color,
         light_color=args.light_color,
+        palette=args.palette,
         allow_low_contrast=args.allow_low_contrast,
         preserve_source_modules=args.preserve_source_modules,
     )
@@ -70,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"拼豆图纸：{result.bead_grid_size}×{result.bead_grid_size} 颗")
     print(f"深色拼豆：{result.dark_beads} 颗")
     print(f"浅色拼豆：{result.light_beads} 颗")
+    print(
+        f"色号标准：{result.palette_title}（深色 {result.dark_code} / 浅色 {result.light_code}）"
+    )
     print(f"成品尺寸：约 {result.physical_size_mm / 10:.1f}×{result.physical_size_mm / 10:.1f} cm")
     print(f"二维码摘要：{result.payload_sha256[:16]}…（不保存明文）")
     print(f"输出目录：{result.output_dir}")

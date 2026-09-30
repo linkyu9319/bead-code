@@ -21,9 +21,9 @@ py -3.13 -m venv .venv
 ## 第一版输出
 
 - `scan_preview.png`：无网格扫码预览，程序会自动复扫验证。
-- `blueprint.png`：带坐标和每 10 格粗线的施工图。
+- `blueprint.png`：每颗拼豆标注实体色号，并带坐标和每 10 格粗线的施工图。
 - `blueprint.pdf`：便于打印的单页 PDF。
-- `materials.csv`：深色、浅色拼豆精确数量和建议采购数量。
+- `materials.csv`：色号标准、实体色号、参考颜色、精确数量和建议采购数量。
 - `metadata.json`：二维码版本、图纸尺寸、成品尺寸和验证结果。
 
 隐私说明：二维码内容只在内存中用于复验，输出文件不保存支付宝链接明文，只保存 SHA-256 摘要。
@@ -49,6 +49,11 @@ py -3.13 -m venv .venv
 - 5mm 拼豆；
 - 深色 `#111827`，浅色 `#FFFFFF`；
 - QR 标准要求的四模块静区。
+
+Web 页面可切换 `MARD 221`、`COCO 291` 和 `Artkal C 197` 三套色号标准。
+程序会按 CIE Lab 视觉色差匹配最接近的实体色号，并使用匹配后的实际颜色执行扫码复验。
+命令行可通过 `--palette mard-221|coco-291|artkal-c-197` 指定标准。
+内置色卡的数据来源和许可见 [THIRD_PARTY_DATA.md](THIRD_PARTY_DATA.md)。
 
 使用一颗拼豆对应一个模块：
 

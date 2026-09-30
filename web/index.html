@@ -40,6 +40,13 @@
         </div>
 
         <div class="field-grid">
+          <label class="field">色号标准
+            <select id="palette" name="palette">
+              <option value="mard-221">MARD 221（国内常用）</option>
+              <option value="coco-291">COCO 291</option>
+              <option value="artkal-c-197">Artkal C 197</option>
+            </select>
+          </label>
           <label class="field">每模块拼豆
             <select name="beads_per_module">
               <option value="2">2 × 2（更稳）</option>
@@ -75,6 +82,7 @@
     <section class="card result hidden" id="result" aria-live="polite">
       <div class="section-head"><span class="step">02</span><div><h2>图纸已就绪</h2><p id="verified-text">自动扫码复验通过</p></div></div>
       <div class="preview-wrap"><img id="blueprint-preview" alt="拼豆施工图预览"></div>
+      <div class="palette-summary" id="palette-summary"></div>
       <div class="stats" id="stats"></div>
       <p class="warning hidden" id="warning"></p>
       <div class="actions">

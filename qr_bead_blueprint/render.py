@@ -53,8 +53,10 @@ def render_blueprint(
     bead_grid: np.ndarray,
     colors: ColorPair,
     cell_px: int,
+    dark_label: str,
+    light_label: str,
 ) -> Image.Image:
-    """生成带行列坐标和十格粗线的施工图。"""
+    """生成每格带实体色号、行列坐标和十格粗线的施工图。"""
     grid_size = int(bead_grid.shape[0])
     label_margin = max(48, cell_px * 3)
     grid_pixels = grid_size * cell_px
@@ -65,6 +67,10 @@ def render_blueprint(
     )
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default()
+    label_styles = {
+        True: _build_label_style(draw, dark_label, colors.dark, cell_px),
+        False: _build_label_style(draw, light_label, colors.light, cell_px),
+    }
 
     left = label_margin
     top = label_margin
@@ -72,8 +78,19 @@ def render_blueprint(
         for col in range(grid_size):
             x0 = left + col * cell_px
             y0 = top + row * cell_px
-            color = colors.dark if bool(bead_grid[row, col]) else colors.light
+            is_dark = bool(bead_grid[row, col])
+            color = colors.dark if is_dark else colors.light
             draw.rectangle((x0, y0, x0 + cell_px, y0 + cell_px), fill=color)
+            label, label_font, text_color, text_width, text_height = label_styles[is_dark]
+            draw.text(
+                (
+                    x0 + (cell_px - text_width) / 2,
+                    y0 + (cell_px - text_height) / 2 - 1,
+                ),
+                label,
+                fill=text_color,
+                font=label_font,
+            )
 
     # 十格粗线用于快速定位；每格细线保留逐颗拼豆的施工精度。
     for index in range(grid_size + 1):
@@ -101,6 +118,26 @@ def render_blueprint(
     title = f"QR bead blueprint  {grid_size} x {grid_size}"
     draw.text((left, 8), title, fill="#0F172A", font=font)
     return canvas
+
+
+def _build_label_style(
+    draw: ImageDraw.ImageDraw,
+    label: str,
+    background: tuple[int, int, int],
+    cell_px: int,
+) -> tuple[str, ImageFont.ImageFont, str, int, int]:
+    """为不同长度色号选择能完整放入单颗拼豆格的字号和前景色。"""
+    font_size = max(5, min(10, int(cell_px * 0.42)))
+    while True:
+        font = ImageFont.load_default(size=font_size)
+        left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
+        width, height = right - left, bottom - top
+        if width <= cell_px - 2 or font_size <= 5:
+            break
+        font_size -= 1
+
+    text_color = "#FFFFFF" if _relative_luminance(background) < 0.42 else "#0F172A"
+    return label, font, text_color, width, height
 
 
 def _contrast_ratio(

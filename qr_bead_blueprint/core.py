@@ -13,6 +13,7 @@ import zxingcpp
 from qrcode.constants import ERROR_CORRECT_H
 from PIL import Image
 
+from .palettes import PalettePair, load_palette, match_palette_pair
 from .render import ColorPair, render_blueprint, render_preview
 
 
@@ -25,10 +26,11 @@ class BlueprintConfig:
     beads_per_module: int = 2
     quiet_zone_modules: int = 4
     bead_size_mm: float = 5.0
-    blueprint_cell_px: int = 18
+    blueprint_cell_px: int = 22
     preview_cell_px: int = 10
     dark_color: str = "#111827"
     light_color: str = "#FFFFFF"
+    palette: str = "mard-221"
     allow_low_contrast: bool = False
     preserve_source_modules: bool = False
 
@@ -45,6 +47,7 @@ class BlueprintConfig:
             raise ValueError("preview_cell_px 必须在 4 到 32 之间")
 
         colors = ColorPair.from_hex(self.dark_color, self.light_color)
+        load_palette(self.palette)
         if not self.allow_low_contrast and colors.contrast_ratio < 4.5:
             raise ValueError(
                 f"深浅颜色对比度仅 {colors.contrast_ratio:.2f}:1，低于安全阈值 4.5:1；"
@@ -63,6 +66,12 @@ class BlueprintResult:
     physical_size_mm: float
     payload_sha256: str
     scan_verified: bool
+    palette_key: str
+    palette_title: str
+    dark_code: str
+    light_code: str
+    dark_hex: str
+    light_hex: str
 
 
 @dataclass(frozen=True)
@@ -188,7 +197,18 @@ def convert_qr_to_blueprint(
         config.quiet_zone_modules,
         config.beads_per_module,
     )
-    colors = ColorPair.from_hex(config.dark_color, config.light_color)
+    # 色卡映射必须先于扫码复验：预览与实物采购使用同一组实体近似色。
+    palette = match_palette_pair(
+        config.palette,
+        config.dark_color,
+        config.light_color,
+    )
+    colors = ColorPair.from_hex(palette.dark.hex, palette.light.hex)
+    if not config.allow_low_contrast and colors.contrast_ratio < 4.5:
+        raise ValueError(
+            f"{palette.title} 匹配后的色号对比度仅 {colors.contrast_ratio:.2f}:1，"
+            "低于安全阈值 4.5:1；请更换颜色或允许低对比色后充分实测"
+        )
 
     preview_path = target / "scan_preview.png"
     blueprint_path = target / "blueprint.png"
@@ -203,7 +223,13 @@ def convert_qr_to_blueprint(
         )
 
     (target / "VERIFICATION_FAILED.txt").unlink(missing_ok=True)
-    blueprint = render_blueprint(bead_grid, colors, config.blueprint_cell_px)
+    blueprint = render_blueprint(
+        bead_grid,
+        colors,
+        config.blueprint_cell_px,
+        palette.dark.code,
+        palette.light.code,
+    )
     blueprint.save(blueprint_path)
     blueprint.convert("RGB").save(pdf_path, "PDF", resolution=300.0)
 
@@ -216,7 +242,7 @@ def convert_qr_to_blueprint(
 
     _write_materials_csv(
         target / "materials.csv",
-        colors,
+        palette,
         dark_beads,
         light_beads,
     )
@@ -231,6 +257,7 @@ def convert_qr_to_blueprint(
         physical_size_mm,
         payload_sha256,
         scan_verified,
+        palette,
     )
 
     return BlueprintResult(
@@ -243,25 +270,33 @@ def convert_qr_to_blueprint(
         physical_size_mm=physical_size_mm,
         payload_sha256=payload_sha256,
         scan_verified=scan_verified,
+        palette_key=palette.key,
+        palette_title=palette.title,
+        dark_code=palette.dark.code,
+        light_code=palette.light.code,
+        dark_hex=palette.dark.hex,
+        light_hex=palette.light.hex,
     )
 
 
 def _write_materials_csv(
     path: Path,
-    colors: ColorPair,
+    palette: PalettePair,
     dark_beads: int,
     light_beads: int,
 ) -> None:
     # 额外预留 8% 损耗，避免熨烫失败或颜色瑕疵导致实物中途缺豆。
     rows = [
-        ("深色", colors.dark_hex, dark_beads),
-        ("浅色/静区", colors.light_hex, light_beads),
+        ("深色", palette.dark.code, palette.dark.hex, dark_beads),
+        ("浅色/静区", palette.light.code, palette.light.hex, light_beads),
     ]
     with path.open("w", newline="", encoding="utf-8-sig") as file:
         writer = csv.writer(file)
-        writer.writerow(["用途", "颜色", "精确数量", "建议准备数量(+8%)"])
-        for label, color, count in rows:
-            writer.writerow([label, color, count, (count * 108 + 99) // 100])
+        writer.writerow(["色号标准", "用途", "色号", "参考颜色", "精确数量", "建议准备数量(+8%)"])
+        for label, code, color, count in rows:
+            writer.writerow(
+                [palette.title, label, code, color, count, (count * 108 + 99) // 100]
+            )
 
 
 def _write_metadata(
@@ -275,6 +310,7 @@ def _write_metadata(
     physical_size_mm: float,
     payload_sha256: str,
     scan_verified: bool,
+    palette: PalettePair,
 ) -> None:
     # 隐私规则：元数据只保留摘要，不落盘支付宝收款链接明文。
     metadata = {
@@ -292,8 +328,14 @@ def _write_metadata(
         "bead_grid_size": bead_grid_size,
         "bead_size_mm": config.bead_size_mm,
         "physical_size_mm": round(physical_size_mm, 2),
-        "dark_color": config.dark_color.upper(),
-        "light_color": config.light_color.upper(),
+        "palette_key": palette.key,
+        "palette_title": palette.title,
+        "requested_dark_color": config.dark_color.upper(),
+        "requested_light_color": config.light_color.upper(),
+        "dark_code": palette.dark.code,
+        "light_code": palette.light.code,
+        "dark_color": palette.dark.hex,
+        "light_color": palette.light.hex,
         "dark_beads": dark_beads,
         "light_beads": light_beads,
         "total_beads": dark_beads + light_beads,
