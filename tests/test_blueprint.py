@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 import qrcode
 from fastapi.testclient import TestClient
-from PIL import Image
 
 from qr_bead_blueprint.core import (
     BlueprintConfig,
@@ -16,7 +15,6 @@ from qr_bead_blueprint.core import (
     verify_rendered_qr,
 )
 from qr_bead_blueprint.palettes import available_palettes, match_palette_pair
-from qr_bead_blueprint.image_mode import ImageBlueprintConfig, convert_image_to_blueprint
 from web_app import app, job_store
 
 
@@ -138,63 +136,6 @@ def test_web_generation_and_direct_downloads(tmp_path: Path) -> None:
         assert pdf.content.startswith(b"%PDF")
 
         assert "package.zip" not in body["files"]
-
-        job_store.discard(body["job_id"])
-
-
-def test_regular_image_conversion_creates_labeled_blueprint(tmp_path: Path) -> None:
-    source = tmp_path / "character.png"
-    image = Image.new("RGB", (96, 64), "#1677FF")
-    for x in range(48, 96):
-        for y in range(64):
-            image.putpixel((x, y), (255, y * 3, 80))
-    image.save(source)
-
-    output = tmp_path / "image-result"
-    result = convert_image_to_blueprint(
-        source,
-        output,
-        ImageBlueprintConfig(grid_size=32, color_limit=8, palette="mard-221"),
-    )
-
-    assert result.grid_size == 32
-    assert 1 <= len(result.materials) <= 8
-    assert sum(item.count for item in result.materials) == 32**2
-    assert (output / "preview.png").is_file()
-    assert (output / "blueprint.png").is_file()
-    assert (output / "blueprint.pdf").is_file()
-    assert (output / "materials.csv").is_file()
-
-
-def test_web_regular_image_generation(tmp_path: Path) -> None:
-    source = tmp_path / "avatar.png"
-    Image.new("RGB", (80, 120), "#07C160").save(source)
-
-    with TestClient(app) as client, source.open("rb") as image:
-        response = client.post(
-            "/api/generate-image",
-            files={"image": ("avatar.png", image, "image/png")},
-            data={
-                "grid_size": "48",
-                "color_limit": "16",
-                "bead_size_mm": "5",
-                "palette": "artkal-c-197",
-            },
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["mode"] == "image"
-        assert body["summary"]["grid_size"] == 48
-        assert body["summary"]["total_beads"] == 48**2
-        assert body["summary"]["color_count"] == 1
-
-        preview = client.get(body["files"]["preview.png"])
-        assert preview.status_code == 200
-        assert preview.headers["content-type"] == "image/png"
-
-        blueprint = client.get(f'{body["files"]["blueprint.png"]}?download=1')
-        assert blueprint.status_code == 200
-        assert blueprint.headers["content-disposition"].startswith("attachment;")
 
         job_store.discard(body["job_id"])
 

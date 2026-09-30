@@ -14,13 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from qr_bead_blueprint import (
-    BlueprintConfig,
-    ImageBlueprintConfig,
-    QrDecodeError,
-    convert_image_to_blueprint,
-    convert_qr_to_blueprint,
-)
+from qr_bead_blueprint import BlueprintConfig, QrDecodeError, convert_qr_to_blueprint
 from qr_bead_blueprint.palettes import PALETTE_FILES
 
 
@@ -28,21 +22,13 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 JOB_TTL_SECONDS = 30 * 60
-QR_FILE_NAMES = {
+ALLOWED_FILE_NAMES = {
     "blueprint.png",
     "blueprint.pdf",
     "scan_preview.png",
     "materials.csv",
     "metadata.json",
 }
-IMAGE_FILE_NAMES = {
-    "blueprint.png",
-    "blueprint.pdf",
-    "preview.png",
-    "materials.csv",
-    "metadata.json",
-}
-ALLOWED_FILE_NAMES = QR_FILE_NAMES | IMAGE_FILE_NAMES
 
 
 @dataclass(frozen=True)
@@ -135,8 +121,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="BeadCode｜拼豆码工坊",
-    description="将静态收款二维码或普通图片转换为可制作的拼豆施工图。",
-    version="1.1.0",
+    description="将静态收款二维码转换为可复扫验证的拼豆施工图。",
+    version="1.0.0",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
@@ -226,69 +212,7 @@ async def generate_blueprint(
         },
         "files": {
             name: f"api/jobs/{job_id}/files/{name}"
-            for name in QR_FILE_NAMES
-        },
-    }
-
-
-@app.post("/api/generate-image")
-async def generate_image_blueprint(
-    image: UploadFile = File(...),
-    grid_size: int = Form(48),
-    color_limit: int = Form(16),
-    bead_size_mm: float = Form(5.0),
-    palette: str = Form("mard-221"),
-) -> dict[str, object]:
-    """接收普通图片并生成多色拼豆图纸；原图转换完成后立即删除。"""
-    if palette not in PALETTE_FILES:
-        raise HTTPException(status_code=422, detail="不支持的色号标准")
-
-    job_id, root = job_store.create()
-    upload_path = root / "upload.bin"
-    result_dir = root / "result-image"
-    try:
-        await _save_upload(image, upload_path)
-        config = ImageBlueprintConfig(
-            grid_size=grid_size,
-            color_limit=color_limit,
-            bead_size_mm=bead_size_mm,
-            palette=palette,
-        )
-        result = convert_image_to_blueprint(upload_path, result_dir, config)
-        upload_path.unlink(missing_ok=True)
-        job_store.publish(job_id, root, result_dir)
-    except ValueError as exc:
-        job_store.discard(job_id, root)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except HTTPException:
-        job_store.discard(job_id, root)
-        raise
-    except Exception as exc:
-        job_store.discard(job_id, root)
-        raise HTTPException(status_code=500, detail="生成失败，请稍后重试") from exc
-    finally:
-        await image.close()
-
-    return {
-        "job_id": job_id,
-        "expires_in_minutes": JOB_TTL_SECONDS // 60,
-        "mode": "image",
-        "warning": "当前版本会从图片中心自动裁成正方形；文字和五官靠近边缘时请先自行裁剪。",
-        "summary": {
-            "grid_size": result.grid_size,
-            "total_beads": result.grid_size**2,
-            "physical_size_cm": round(result.physical_size_mm / 10, 1),
-            "color_count": len(result.materials),
-            "palette_key": result.palette_key,
-            "palette_title": result.palette_title,
-            "materials": [
-                {"code": item.code, "hex": item.hex, "count": item.count}
-                for item in result.materials
-            ],
-        },
-        "files": {
-            name: f"api/jobs/{job_id}/files/{name}"
-            for name in IMAGE_FILE_NAMES
+            for name in ALLOWED_FILE_NAMES
         },
     }
 
@@ -329,7 +253,7 @@ async def _save_upload(image: UploadFile, destination: Path) -> None:
                 raise HTTPException(status_code=413, detail="图片不能超过 10MB")
             file.write(chunk)
     if total == 0:
-        raise HTTPException(status_code=422, detail="请选择图片")
+        raise HTTPException(status_code=422, detail="请选择二维码图片")
 
 
 def _convert_with_fallback(
