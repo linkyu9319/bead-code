@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#10261d">
+  <title>BeadCode｜拼豆码工坊</title>
+  <link rel="stylesheet" href="static/app.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <span class="eyebrow">BEADCODE</span>
+      <h1>把收款码，<br><em>变成拼豆图纸。</em></h1>
+      <p>上传二维码，自动生成施工图、材料清单，并在交付前重新扫码验证。</p>
+      <div class="trust"><span>✓ 不保存二维码明文</span><span>✓ 结果 30 分钟后清理</span></div>
+    </header>
+
+    <section class="card" aria-labelledby="form-title">
+      <div class="section-head">
+        <span class="step">01</span>
+        <div><h2 id="form-title">生成图纸</h2><p>静态微信、支付宝及普通二维码</p></div>
+      </div>
+
+      <form id="generator-form">
+        <label class="upload" id="drop-zone">
+          <input id="image" name="image" type="file" accept="image/png,image/jpeg,image/webp" required>
+          <span class="upload-icon">＋</span>
+          <strong id="upload-title">选择二维码图片</strong>
+          <small>PNG / JPG / WEBP，最大 10MB</small>
+        </label>
+
+        <div class="field">
+          <label>二维码类型</label>
+          <div class="segmented" id="platform-picker">
+            <label><input type="radio" name="platform" value="wechat" checked><span>微信</span></label>
+            <label><input type="radio" name="platform" value="alipay"><span>支付宝</span></label>
+            <label><input type="radio" name="platform" value="other"><span>其他</span></label>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">每模块拼豆
+            <select name="beads_per_module">
+              <option value="2">2 × 2（更稳）</option>
+              <option value="1">1 × 1（更小）</option>
+              <option value="3">3 × 3</option>
+              <option value="4">4 × 4</option>
+            </select>
+          </label>
+          <label class="field">拼豆直径
+            <select name="bead_size_mm">
+              <option value="5">5 mm 标准豆</option>
+              <option value="2.6">2.6 mm 迷你豆</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="field color-row">
+          <label>深色拼豆</label>
+          <div class="color-control"><input id="dark-color" name="dark_color" type="color" value="#07c160"><output id="color-value">#07C160</output></div>
+        </div>
+        <input name="light_color" type="hidden" value="#FFFFFF">
+        <input name="compatibility_mode" type="hidden" value="auto">
+
+        <label class="check-row">
+          <input id="contrast-check" name="allow_low_contrast" type="checkbox" value="true" checked>
+          <span>允许使用平台品牌色（实物仍需扫码测试）</span>
+        </label>
+
+        <button class="primary" type="submit"><span>生成并验证</span><b>→</b></button>
+      </form>
+    </section>
+
+    <section class="card result hidden" id="result" aria-live="polite">
+      <div class="section-head"><span class="step">02</span><div><h2>图纸已就绪</h2><p id="verified-text">自动扫码复验通过</p></div></div>
+      <div class="preview-wrap"><img id="blueprint-preview" alt="拼豆施工图预览"></div>
+      <div class="stats" id="stats"></div>
+      <p class="warning hidden" id="warning"></p>
+      <div class="actions">
+        <a class="primary" id="download-png" href="#" target="_blank"><span>打开并保存图纸 PNG</span><b>↓</b></a>
+        <a class="secondary" id="download-pdf" href="#">下载打印版 PDF</a>
+        <a class="secondary" id="download-materials" href="#">下载材料清单 CSV</a>
+      </div>
+      <p class="expiry" id="expiry"></p>
+    </section>
+
+    <section class="card guide">
+      <div class="section-head"><span class="step">!</span><div><h2>制作前必读</h2><p>数字验证通过 ≠ 实物绝对成功</p></div></div>
+      <ol><li>不要裁掉二维码四周的白色静区。</li><li>尽量使用深浅反差明显、低反光的拼豆。</li><li>成品请用多台手机实测，并核对收款人昵称。</li></ol>
+    </section>
+  </main>
+
+  <div class="toast hidden" id="toast"></div>
+  <div class="loading hidden" id="loading"><div class="spinner"></div><strong>正在识别并复扫验证…</strong><span>通常只需要几秒</span></div>
+  <script src="static/app.js" defer></script>
+</body>
+</html>
