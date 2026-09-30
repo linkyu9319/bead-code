@@ -102,6 +102,11 @@ def test_web_generation_and_direct_downloads(tmp_path: Path) -> None:
         blueprint = client.get(body["files"]["blueprint.png"])
         assert blueprint.status_code == 200
         assert blueprint.headers["content-type"] == "image/png"
+        assert blueprint.headers["content-disposition"].startswith("inline;")
+
+        mobile_download = client.get(f'{body["files"]["blueprint.png"]}?download=1')
+        assert mobile_download.status_code == 200
+        assert mobile_download.headers["content-disposition"].startswith("attachment;")
 
         pdf = client.get(body["files"]["blueprint.pdf"])
         assert pdf.status_code == 200

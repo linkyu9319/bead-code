@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -209,8 +209,12 @@ async def generate_blueprint(
 
 
 @app.get("/api/jobs/{job_id}/files/{file_name}")
-def get_generated_file(job_id: str, file_name: str) -> FileResponse:
-    """读取随机任务下的白名单文件，阻止路径穿越和任意临时文件下载。"""
+def get_generated_file(
+    job_id: str,
+    file_name: str,
+    download: bool = Query(False),
+) -> FileResponse:
+    """读取白名单结果文件；PNG 可按预览或手机下载两种方式返回。"""
     if file_name not in ALLOWED_FILE_NAMES:
         raise HTTPException(status_code=404, detail="文件不存在")
     try:
@@ -221,8 +225,12 @@ def get_generated_file(job_id: str, file_name: str) -> FileResponse:
     path = job.result_dir / file_name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="文件不存在")
-    # 手机端 PNG 保持页面内打开，用户可长按保存；PDF 和清单直接触发下载。
-    disposition = "attachment" if file_name in {"blueprint.pdf", "materials.csv"} else "inline"
+    # 手机浏览器对 download 属性支持不一致，由服务端附件响应保证点击按钮后真正触发保存。
+    disposition = (
+        "attachment"
+        if download or file_name in {"blueprint.pdf", "materials.csv"}
+        else "inline"
+    )
     return FileResponse(path, filename=file_name, content_disposition_type=disposition)
 
 

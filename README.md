@@ -1,5 +1,7 @@
 # BeadCode｜拼豆码工坊
 
+[![CI](https://github.com/yunko1993/bead-code/actions/workflows/ci.yml/badge.svg)](https://github.com/yunko1993/bead-code/actions/workflows/ci.yml)
+
 将微信、支付宝等**静态二维码图片**转换成拼豆图纸。项目同时提供手机适配的 Web 页面和命令行工具。程序不会按普通图片缩放二维码，而是先解码收款内容，再重建无头像、H 级纠错的干净二维码，最后按整数倍映射成拼豆。
 
 ## 启动 Web 页面
@@ -38,7 +40,7 @@ py -3.13 -m venv .venv
 ## 使用
 
 ```powershell
-.\.venv\Scripts\python.exe main.py "C:\path\支付宝收款码.png"
+.\.venv\Scripts\python.exe main.py ".\支付宝收款码.png"
 ```
 
 默认采用：
@@ -51,13 +53,13 @@ py -3.13 -m venv .venv
 使用一颗拼豆对应一个模块：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py "C:\path\收款码.png" --beads-per-module 1
+.\.venv\Scripts\python.exe main.py ".\收款码.png" --beads-per-module 1
 ```
 
 使用支付宝蓝色拼豆：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py "C:\path\收款码.png" --dark-color "#1677FF" --allow-low-contrast
+.\.venv\Scripts\python.exe main.py ".\收款码.png" --dark-color "#1677FF" --allow-low-contrast
 ```
 
 支付宝蓝与纯白的计算对比度约为 `4.10:1`，略低于本工具保守设置的 `4.5:1`，因此需要明确允许。程序仍会自动复扫数字预览，但制作实物前必须额外验证。
@@ -65,13 +67,13 @@ py -3.13 -m venv .venv
 指定输出目录和 2.6mm 迷你拼豆：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py "C:\path\收款码.png" -o output --bead-size-mm 2.6
+.\.venv\Scripts\python.exe main.py ".\收款码.png" -o output --bead-size-mm 2.6
 ```
 
 部分微信平台码包含 ECI 或中央头像结构，如果干净重建无法通过自动复扫，可使用兼容模式保留原始模块：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py "C:\path\微信收款码.png" --preserve-source-modules
+.\.venv\Scripts\python.exe main.py ".\微信收款码.png" --preserve-source-modules
 ```
 
 兼容模式会保留平台原码已经使用的纠错余量，实物制作应优先使用每模块 `2 × 2` 颗拼豆。

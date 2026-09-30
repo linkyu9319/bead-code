@@ -39,3 +39,55 @@ jobs:
 
       - name: Verify Docker image builds
         run: docker build --tag bead-code:ci .
+
+  deploy:
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure deployment SSH key
+        shell: bash
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Package release
+        run: tar --exclude=.git --exclude=.github --exclude=output -czf /tmp/bead-code-release.tar.gz .
+
+      - name: Upload and activate release
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          remote_archive="/tmp/bead-code-${GITHUB_SHA}.tar.gz"
+          scp /tmp/bead-code-release.tar.gz "${DEPLOY_USER}@${DEPLOY_HOST}:${remote_archive}"
+          ssh "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "REMOTE_ARCHIVE='${remote_archive}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          tar -xzf "$REMOTE_ARCHIVE" -C /opt/bead-code
+          rm -f "$REMOTE_ARCHIVE"
+          cd /opt/bead-code
+          docker compose up -d --build bead-code
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8010/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker compose logs --tail=100 bead-code
+          exit 1
+          REMOTE

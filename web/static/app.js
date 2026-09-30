@@ -57,7 +57,7 @@ form.addEventListener("submit", async (event) => {
 function renderResult(data) {
   const summary = data.summary;
   document.querySelector("#blueprint-preview").src = `${data.files["blueprint.png"]}?v=${Date.now()}`;
-  document.querySelector("#download-png").href = data.files["blueprint.png"];
+  document.querySelector("#download-png").href = `${data.files["blueprint.png"]}?download=1`;
   document.querySelector("#download-pdf").href = data.files["blueprint.pdf"];
   document.querySelector("#download-materials").href = data.files["materials.csv"];
   document.querySelector("#stats").innerHTML = [
