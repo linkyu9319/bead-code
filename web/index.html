@@ -11,15 +11,20 @@
   <main class="shell">
     <header class="hero">
       <span class="eyebrow">BEADCODE</span>
-      <h1>把收款码，<br><em>变成拼豆图纸。</em></h1>
-      <p>上传二维码，自动生成施工图、材料清单，并在交付前重新扫码验证。</p>
-      <div class="trust"><span>✓ 不保存二维码明文</span><span>✓ 结果 30 分钟后清理</span></div>
+      <h1>把每张图片，<br><em>变成拼豆图纸。</em></h1>
+      <p>收款二维码严格复扫，普通图片自动减色；统一生成带色号施工图和材料清单。</p>
+      <div class="trust"><span>✓ 原图转换后删除</span><span>✓ 结果 30 分钟后清理</span></div>
     </header>
 
     <section class="card" aria-labelledby="form-title">
       <div class="section-head">
         <span class="step">01</span>
-        <div><h2 id="form-title">生成图纸</h2><p>静态微信、支付宝及普通二维码</p></div>
+        <div><h2 id="form-title">生成图纸</h2><p id="form-subtitle">静态微信、支付宝及普通二维码</p></div>
+      </div>
+
+      <div class="mode-tabs" role="tablist" aria-label="图纸类型">
+        <button class="mode-tab active" type="button" data-mode="qr" role="tab" aria-selected="true">收款码</button>
+        <button class="mode-tab" type="button" data-mode="image" role="tab" aria-selected="false">普通图片</button>
       </div>
 
       <form id="generator-form">
@@ -30,29 +35,67 @@
           <small>PNG / JPG / WEBP，最大 10MB</small>
         </label>
 
-        <div class="field">
-          <label>二维码类型</label>
-          <div class="segmented" id="platform-picker">
-            <label><input type="radio" name="platform" value="wechat" checked><span>微信</span></label>
-            <label><input type="radio" name="platform" value="alipay"><span>支付宝</span></label>
-            <label><input type="radio" name="platform" value="other"><span>其他</span></label>
+        <div class="mode-panel" data-panel="qr">
+          <div class="field">
+            <label>二维码类型</label>
+            <div class="segmented" id="platform-picker">
+              <label><input type="radio" name="platform" value="wechat" checked><span>微信</span></label>
+              <label><input type="radio" name="platform" value="alipay"><span>支付宝</span></label>
+              <label><input type="radio" name="platform" value="other"><span>其他</span></label>
+            </div>
           </div>
+
+          <div class="field-grid">
+            <label class="field">每模块拼豆
+              <select name="beads_per_module">
+                <option value="2">2 × 2（更稳）</option>
+                <option value="1">1 × 1（更小）</option>
+                <option value="3">3 × 3</option>
+                <option value="4">4 × 4</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field color-row">
+            <label>深色拼豆</label>
+            <div class="color-control"><input id="dark-color" name="dark_color" type="color" value="#07c160"><output id="color-value">#07C160</output></div>
+          </div>
+          <input name="light_color" type="hidden" value="#FFFFFF">
+          <input name="compatibility_mode" type="hidden" value="auto">
+
+          <label class="check-row">
+            <input id="contrast-check" name="allow_low_contrast" type="checkbox" value="true" checked>
+            <span>允许使用平台品牌色（实物仍需扫码测试）</span>
+          </label>
         </div>
 
-        <div class="field-grid">
+        <div class="mode-panel hidden" data-panel="image">
+          <div class="field-grid">
+            <label class="field">图纸尺寸
+              <select name="grid_size">
+                <option value="32">32 × 32（简单图标）</option>
+                <option value="48" selected>48 × 48（推荐）</option>
+                <option value="64">64 × 64（细节更多）</option>
+              </select>
+            </label>
+            <label class="field">最多颜色
+              <select name="color_limit">
+                <option value="8">8 色（容易制作）</option>
+                <option value="16" selected>16 色（推荐）</option>
+                <option value="24">24 色</option>
+                <option value="32">32 色（细节更多）</option>
+              </select>
+            </label>
+          </div>
+          <p class="mode-note">当前会从图片中心自动裁成正方形，优先选择主体居中的头像、动漫或 Logo。</p>
+        </div>
+
+        <div class="field-grid common-fields">
           <label class="field">色号标准
             <select id="palette" name="palette">
               <option value="mard-221">MARD 221（国内常用）</option>
               <option value="coco-291">COCO 291</option>
               <option value="artkal-c-197">Artkal C 197</option>
-            </select>
-          </label>
-          <label class="field">每模块拼豆
-            <select name="beads_per_module">
-              <option value="2">2 × 2（更稳）</option>
-              <option value="1">1 × 1（更小）</option>
-              <option value="3">3 × 3</option>
-              <option value="4">4 × 4</option>
             </select>
           </label>
           <label class="field">拼豆直径
@@ -63,19 +106,7 @@
           </label>
         </div>
 
-        <div class="field color-row">
-          <label>深色拼豆</label>
-          <div class="color-control"><input id="dark-color" name="dark_color" type="color" value="#07c160"><output id="color-value">#07C160</output></div>
-        </div>
-        <input name="light_color" type="hidden" value="#FFFFFF">
-        <input name="compatibility_mode" type="hidden" value="auto">
-
-        <label class="check-row">
-          <input id="contrast-check" name="allow_low_contrast" type="checkbox" value="true" checked>
-          <span>允许使用平台品牌色（实物仍需扫码测试）</span>
-        </label>
-
-        <button class="primary" type="submit"><span>生成并验证</span><b>→</b></button>
+        <button class="primary" type="submit"><span id="submit-label">生成并验证</span><b>→</b></button>
       </form>
     </section>
 
@@ -87,6 +118,7 @@
       <p class="warning hidden" id="warning"></p>
       <div class="actions">
         <a class="primary" id="download-png" href="#" download="beadcode-blueprint.png"><span>下载图纸 PNG</span><b>↓</b></a>
+        <a class="secondary hidden" id="download-preview" href="#">下载无色号预览图</a>
         <a class="secondary" id="download-pdf" href="#">下载打印版 PDF</a>
         <a class="secondary" id="download-materials" href="#">下载材料清单 CSV</a>
       </div>
@@ -94,13 +126,13 @@
     </section>
 
     <section class="card guide">
-      <div class="section-head"><span class="step">!</span><div><h2>制作前必读</h2><p>数字验证通过 ≠ 实物绝对成功</p></div></div>
-      <ol><li>不要裁掉二维码四周的白色静区。</li><li>尽量使用深浅反差明显、低反光的拼豆。</li><li>成品请用多台手机实测，并核对收款人昵称。</li></ol>
+      <div class="section-head"><span class="step">!</span><div><h2>制作前必读</h2><p>屏幕颜色和实体拼豆可能存在色差</p></div></div>
+      <ol><li>收款码不要裁掉四周白色静区，成品务必再次扫码确认收款人。</li><li>普通图片会自动居中裁切并减色，建议先下载预览图检查效果。</li><li>材料清单已预留 8% 损耗，正式制作前仍建议核对库存。</li></ol>
     </section>
   </main>
 
   <div class="toast hidden" id="toast"></div>
-  <div class="loading hidden" id="loading"><div class="spinner"></div><strong>正在识别并复扫验证…</strong><span>通常只需要几秒</span></div>
+  <div class="loading hidden" id="loading"><div class="spinner"></div><strong id="loading-title">正在识别并复扫验证…</strong><span>通常只需要几秒</span></div>
   <script src="static/app.js" defer></script>
 </body>
 </html>

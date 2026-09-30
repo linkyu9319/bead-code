@@ -70,6 +70,11 @@ def match_palette_pair(key: str, dark_hex: str, light_hex: str) -> PalettePair:
     )
 
 
+def match_palette_color(key: str, target_hex: str) -> BeadColor:
+    """将任意颜色映射为指定品牌中视觉距离最近的可购买色号。"""
+    return _nearest_color(load_palette(key), target_hex)
+
+
 def _nearest_color(palette: BeadPalette, target_hex: str) -> BeadColor:
     target = _build_color("target", target_hex)
     return min(
