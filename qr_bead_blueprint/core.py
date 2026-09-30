@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import qrcode
+import zxingcpp
 from qrcode.constants import ERROR_CORRECT_H
 from PIL import Image
 
@@ -141,13 +142,23 @@ def regenerate_clean_qr(payload: str) -> DecodedQr:
 
 
 def verify_rendered_qr(preview_path: Path, expected_payload: str) -> bool:
-    """重新扫描生成结果，避免一张看似正确但无法付款的图纸流出。"""
+    """使用双引擎重新扫描生成结果，避免单一解码器误判或漏判。"""
     image_bytes = np.fromfile(preview_path, dtype=np.uint8)
     image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
     if image is None:
         return False
+
     payload, _points, _straight = cv2.QRCodeDetector().detectAndDecode(image)
-    return bool(payload) and payload == expected_payload
+    if payload == expected_payload:
+        return True
+
+    # 兼容性说明：OpenCV 对部分合法 QR 版本和掩码会返回空内容，ZXing 用作独立复验兜底。
+    barcodes = zxingcpp.read_barcodes(
+        image,
+        formats=zxingcpp.BarcodeFormat.QRCode,
+        try_rotate=False,
+    )
+    return any(barcode.text == expected_payload for barcode in barcodes)
 
 
 def convert_qr_to_blueprint(

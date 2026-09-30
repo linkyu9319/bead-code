@@ -12,6 +12,7 @@ from qr_bead_blueprint.core import (
     QrDecodeError,
     convert_qr_to_blueprint,
     qr_version_from_size,
+    verify_rendered_qr,
 )
 from web_app import app, job_store
 
@@ -57,6 +58,23 @@ def test_end_to_end_conversion(tmp_path: Path) -> None:
     assert metadata["source_qr_version"] >= 1
     assert metadata["payload_length"] == len(payload)
     assert payload not in (output / "metadata.json").read_text(encoding="utf-8")
+
+
+def test_verification_falls_back_to_zxing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = "https://qr.alipay.com/example"
+    preview = tmp_path / "preview.png"
+    qrcode.make(payload).save(preview)
+
+    class EmptyOpenCvDetector:
+        def detectAndDecode(self, _image):
+            return "", None, None
+
+    monkeypatch.setattr("qr_bead_blueprint.core.cv2.QRCodeDetector", EmptyOpenCvDetector)
+
+    assert verify_rendered_qr(preview, payload) is True
 
 
 def test_web_generation_and_direct_downloads(tmp_path: Path) -> None:
