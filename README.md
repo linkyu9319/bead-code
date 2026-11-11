@@ -1,6 +1,6 @@
 # BeadCode｜拼豆码工坊
 
-[![CI](https://github.com/yunko1993/bead-code/actions/workflows/ci.yml/badge.svg)](https://github.com/yunko1993/bead-code/actions/workflows/ci.yml)
+[![CI](https://github.com/linkyu9319/bead-code/actions/workflows/ci.yml/badge.svg)](https://github.com/linkyu9319/bead-code/actions/workflows/ci.yml)
 
 将微信、支付宝等**静态二维码图片**转换成拼豆图纸。项目同时提供手机适配的 Web 页面和命令行工具。程序不会按普通图片缩放二维码，而是先解码收款内容，再重建无头像、H 级纠错的干净二维码，最后按整数倍映射成拼豆。
 
