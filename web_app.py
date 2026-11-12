@@ -11,8 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from qr_bead_blueprint import BlueprintConfig, QrDecodeError, convert_qr_to_blueprint
 from qr_bead_blueprint.palettes import PALETTE_FILES
@@ -22,6 +24,10 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 JOB_TTL_SECONDS = 30 * 60
+# 单次转换是 CPU/内存重活（大版本码约 5 秒、峰值数百 MB），必须限制并发并放到线程池执行，
+# 否则会阻塞事件循环，连 /health 都会排队超时。
+MAX_CONCURRENT_CONVERSIONS = 2
+MAX_QUEUED_CONVERSIONS = 4
 ALLOWED_FILE_NAMES = {
     "blueprint.png",
     "blueprint.pdf",
@@ -103,9 +109,87 @@ class JobStore:
 job_store = JobStore()
 
 
+def _conversion_slots() -> asyncio.Semaphore:
+    """懒创建并发闸门；服务未走 lifespan（如单测直连）时也能工作。"""
+    slots = getattr(app.state, "conversion_slots", None)
+    if slots is None:
+        slots = asyncio.Semaphore(MAX_CONCURRENT_CONVERSIONS)
+        app.state.conversion_slots = slots
+    return slots
+
+
+def _admission_slots() -> asyncio.Queue[None]:
+    """限制上传与转换中的请求总量；必须在解析 multipart 前占用名额。"""
+    slots = getattr(app.state, "admission_slots", None)
+    if slots is None:
+        slots = asyncio.Queue(MAX_CONCURRENT_CONVERSIONS + MAX_QUEUED_CONVERSIONS)
+        app.state.admission_slots = slots
+    return slots
+
+
+class ConversionAdmissionMiddleware:
+    """在读取上传内容前拒绝超额请求，避免排队原图和 multipart 临时文件撑满磁盘。"""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] != "http"
+            or scope["method"] != "POST"
+            or scope["path"] != "/api/generate"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        slots = _admission_slots()
+        try:
+            slots.put_nowait(None)
+        except asyncio.QueueFull:
+            response = JSONResponse(
+                {"detail": "当前生成任务较多，请稍后重试"},
+                status_code=503,
+                headers={"Retry-After": "5"},
+            )
+            await response(scope, receive, send)
+            return
+
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            slots.get_nowait()
+
+
+async def _run_conversion_safely(**kwargs):
+    """取消请求时仍等待已启动的线程，确保名额和文件的生命周期覆盖实际转换。"""
+    conversion = asyncio.create_task(run_in_threadpool(_convert_with_fallback, **kwargs))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(conversion)
+        except asyncio.CancelledError:
+            # asyncio 无法终止工作线程；提前释放名额或删文件会造成超并发和读写竞争。
+            cancelled = True
+            if conversion.cancelled():
+                raise
+        except Exception:
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+        else:
+            if cancelled:
+                raise asyncio.CancelledError
+            return result
+
+
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(application: FastAPI):
     """定期执行隐私清理；停止服务时再做一次全量清理。"""
+    application.state.conversion_slots = asyncio.Semaphore(MAX_CONCURRENT_CONVERSIONS)
+    application.state.admission_slots = asyncio.Queue(
+        MAX_CONCURRENT_CONVERSIONS + MAX_QUEUED_CONVERSIONS
+    )
+
     async def cleanup_loop() -> None:
         while True:
             await asyncio.sleep(60)
@@ -125,6 +209,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.add_middleware(ConversionAdmissionMiddleware)
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 
 
@@ -153,40 +238,51 @@ async def generate_blueprint(
     allow_low_contrast: bool = Form(False),
 ) -> dict[str, object]:
     """接收二维码并生成图纸；原图在转换结束后立即删除，结果短期保留。"""
-    _validate_form(platform, compatibility_mode, palette)
-    job_id, root = job_store.create()
-    upload_path = root / "upload.bin"
+    job_id = None
+    root = None
+    published = False
 
     try:
+        _validate_form(platform, compatibility_mode, palette)
+        job_id, root = job_store.create()
+        upload_path = root / "upload.bin"
         await _save_upload(image, upload_path)
-        result, result_dir, used_mode = _convert_with_fallback(
-            upload_path=upload_path,
-            root=root,
-            beads_per_module=beads_per_module,
-            bead_size_mm=bead_size_mm,
-            dark_color=dark_color,
-            light_color=light_color,
-            palette=palette,
-            compatibility_mode=compatibility_mode,
-            allow_low_contrast=allow_low_contrast,
-        )
+        # 转换是同步 CPU 重活，交给线程池，避免阻塞事件循环（健康检查也会排队）。
+        async with _conversion_slots():
+            result, result_dir, used_mode = await _run_conversion_safely(
+                upload_path=upload_path,
+                root=root,
+                beads_per_module=beads_per_module,
+                bead_size_mm=bead_size_mm,
+                dark_color=dark_color,
+                light_color=light_color,
+                palette=palette,
+                compatibility_mode=compatibility_mode,
+                allow_low_contrast=allow_low_contrast,
+            )
         upload_path.unlink(missing_ok=True)
         job_store.publish(job_id, root, result_dir)
+        published = True
     except (ValueError, QrDecodeError) as exc:
-        job_store.discard(job_id, root)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
-        job_store.discard(job_id, root)
         raise
     except Exception as exc:
-        job_store.discard(job_id, root)
         raise HTTPException(status_code=500, detail="生成失败，请稍后重试") from exc
     finally:
+        # 未发布的任务包括校验失败、排队取消和转换取消，必须统一清理，不能仅捕获 Exception。
+        if not published and root is not None:
+            job_store.discard(job_id, root)
         await image.close()
 
     warning = None
     if used_mode == "preserve":
         warning = "已使用原始平台模块兼容模式；制作实物时建议选择每模块 2×2 颗并充分测试。"
+    elif result.error_correction != "H":
+        warning = (
+            f"二维码内容较长，纠错等级已降为 {result.error_correction} 级；"
+            "实物请务必选择每模块 2×2 颗并充分测试。"
+        )
     elif allow_low_contrast:
         warning = "当前颜色低于保守对比度标准；数字预览已复扫通过，但实物必须额外测试。"
 
@@ -203,6 +299,7 @@ async def generate_blueprint(
             "light_beads": result.light_beads,
             "physical_size_cm": round(result.physical_size_mm / 10, 1),
             "scan_verified": result.scan_verified,
+            "error_correction": result.error_correction,
             "palette_key": result.palette_key,
             "palette_title": result.palette_title,
             "dark_code": result.dark_code,
@@ -268,6 +365,7 @@ def _convert_with_fallback(
     allow_low_contrast: bool,
 ):
     """优先生成干净高纠错码；自动模式失败后再兼容平台原始矩阵。"""
+    # QrCapacityError 是 QrDecodeError 子类：所有纠错等级都放不下时，自动模式仍可尝试原始矩阵。
     modes = [compatibility_mode] if compatibility_mode != "auto" else ["clean", "preserve"]
     last_error: Exception | None = None
 

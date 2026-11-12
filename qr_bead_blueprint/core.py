@@ -10,7 +10,12 @@ import cv2
 import numpy as np
 import qrcode
 import zxingcpp
-from qrcode.constants import ERROR_CORRECT_H
+from qrcode.constants import (
+    ERROR_CORRECT_H,
+    ERROR_CORRECT_L,
+    ERROR_CORRECT_M,
+    ERROR_CORRECT_Q,
+)
 from PIL import Image
 
 from .palettes import PalettePair, load_palette, match_palette_pair
@@ -19,6 +24,19 @@ from .render import ColorPair, render_blueprint, render_preview
 
 class QrDecodeError(ValueError):
     """输入图片无法恢复为可靠二维码模块时抛出。"""
+
+
+class QrCapacityError(QrDecodeError):
+    """内容过长，连最低纠错等级都无法编码；只能保留平台原始矩阵。"""
+
+
+# 干净重建时优先 H 级；内容过长时逐级降级，避免合法长链接被整体拒绝。
+ERROR_CORRECTION_FALLBACK = (
+    ("H", ERROR_CORRECT_H),
+    ("Q", ERROR_CORRECT_Q),
+    ("M", ERROR_CORRECT_M),
+    ("L", ERROR_CORRECT_L),
+)
 
 
 @dataclass(frozen=True)
@@ -72,13 +90,18 @@ class BlueprintResult:
     light_code: str
     dark_hex: str
     light_hex: str
+    error_correction: str = "H"
 
 
 @dataclass(frozen=True)
 class DecodedQr:
+    # 兼容性说明：ZXing 兜底解码只能拿到文本，无法拿到模块矩阵，
+    # 因此 modules/version 允许为空，仅兼容模式要求矩阵存在。
     payload: str
-    modules: np.ndarray
-    version: int
+    modules: np.ndarray | None
+    version: int | None
+    # 实际使用的纠错等级；兼容模式沿用平台原码，无法确定时记为 "source"。
+    error_correction: str = "H"
 
 
 def qr_version_from_size(module_size: int) -> int:
@@ -91,7 +114,7 @@ def qr_version_from_size(module_size: int) -> int:
 
 
 def decode_qr_image(input_path: Path) -> DecodedQr:
-    """解码二维码并取得 OpenCV 校正后的黑白模块矩阵。"""
+    """解码二维码；优先取 OpenCV 的模块矩阵，取不到时用 ZXing 只解内容。"""
     image_bytes = np.fromfile(input_path, dtype=np.uint8)
     image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
     if image is None:
@@ -99,20 +122,54 @@ def decode_qr_image(input_path: Path) -> DecodedQr:
 
     detector = cv2.QRCodeDetector()
     payload, _points, straight = detector.detectAndDecode(image)
-    if not payload or straight is None or straight.size == 0:
+    if payload:
+        modules = _modules_from_straight(straight)
+        version = qr_version_from_size(int(modules.shape[0])) if modules is not None else None
+        return DecodedQr(
+            payload=payload,
+            modules=modules,
+            version=version,
+            error_correction="source",
+        )
+
+    # 兼容性说明：OpenCV 对部分合法 QR 版本和掩码（实测 v18/v24/v27 等）会解不出内容，
+    # 但同一张图 ZXing 可以正常解码。干净重建只需要内容，因此这里兜底避免误拒合法码。
+    payload = _decode_payload_with_zxing(image)
+    if not payload:
         raise QrDecodeError(
             "没有识别到可解码二维码；请使用清晰原图，并确保二维码四周没有被裁掉"
         )
+    return DecodedQr(payload=payload, modules=None, version=None, error_correction="source")
 
+
+def _modules_from_straight(straight: np.ndarray | None) -> np.ndarray | None:
+    """把 OpenCV 校正结果转成模块矩阵；不合格时返回 None，由调用方决定降级策略。"""
+    if straight is None or straight.size == 0:
+        return None
     if straight.ndim == 3:
         straight = cv2.cvtColor(straight, cv2.COLOR_BGR2GRAY)
     if straight.shape[0] != straight.shape[1]:
-        raise QrDecodeError("校正后的二维码不是正方形")
-
+        return None
     module_size = int(straight.shape[0])
-    version = qr_version_from_size(module_size)
-    modules = np.asarray(straight < 128, dtype=np.bool_)
-    return DecodedQr(payload=payload, modules=modules, version=version)
+    if module_size < 21 or module_size > 177 or (module_size - 21) % 4 != 0:
+        # 常见于被普通缩放或截图污染的原图：内容可用，但不适合原样照抄模块。
+        return None
+    return np.asarray(straight < 128, dtype=np.bool_)
+
+
+def _decode_payload_with_zxing(image: np.ndarray) -> str:
+    """使用独立解码器只取文本内容；失败返回空字符串。"""
+    try:
+        barcodes = zxingcpp.read_barcodes(
+            image,
+            formats=zxingcpp.BarcodeFormat.QRCode,
+        )
+    except Exception:  # pragma: no cover - 第三方库内部异常不应中断整个请求
+        return ""
+    for barcode in barcodes:
+        if barcode.text:
+            return barcode.text
+    return ""
 
 
 def build_bead_grid(
@@ -135,19 +192,38 @@ def build_bead_grid(
 
 
 def regenerate_clean_qr(payload: str) -> DecodedQr:
-    """使用同一收款内容重建无 Logo 的 H 级纠错二维码。"""
-    # 安全规则：原图中央头像会占用真实模块；若直接照抄，拼豆误差会与既有遮挡叠加。
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=ERROR_CORRECT_H,
-        box_size=1,
-        border=0,
-    )
-    qr.add_data(payload, optimize=0)
-    qr.make(fit=True)
-    modules = np.asarray(qr.get_matrix(), dtype=np.bool_)
-    version = qr_version_from_size(int(modules.shape[0]))
-    return DecodedQr(payload=payload, modules=modules, version=version)
+    """使用同一收款内容重建无 Logo 的二维码；H 级放不下时逐级降级。
+
+    安全规则：原图中央头像会占用真实模块；若直接照抄，拼豆误差会与既有遮挡叠加，
+    因此默认重建。但很长的收款链接无法在 H 级编码，此时降级到 Q/M/L，
+    并把实际等级写进元数据，避免整条合法链接被拒绝。
+    """
+    last_error: Exception | None = None
+    for label, level in ERROR_CORRECTION_FALLBACK:
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=level,
+            box_size=1,
+            border=0,
+        )
+        qr.add_data(payload, optimize=0)
+        try:
+            qr.make(fit=True)
+        except Exception as exc:  # qrcode 在容量溢出时抛 ValueError("Invalid version (was 41...)")
+            last_error = exc
+            continue
+        modules = np.asarray(qr.get_matrix(), dtype=np.bool_)
+        return DecodedQr(
+            payload=payload,
+            modules=modules,
+            version=qr_version_from_size(int(modules.shape[0])),
+            error_correction=label,
+        )
+
+    raise QrCapacityError(
+        f"二维码内容长度 {len(payload)} 字节，超出最低纠错等级（L）的编码上限；"
+        "只能保留平台原始模块，请使用兼容模式"
+    ) from last_error
 
 
 def verify_rendered_qr(preview_path: Path, expected_payload: str) -> bool:
@@ -187,11 +263,17 @@ def convert_qr_to_blueprint(
 
     source_qr = decode_qr_image(source)
     # 微信等平台码可能携带 OpenCV 不能稳定重建的 ECI 特征，此时允许原样保留平台矩阵。
-    decoded = (
-        source_qr
-        if config.preserve_source_modules
-        else regenerate_clean_qr(source_qr.payload)
-    )
+    if config.preserve_source_modules:
+        if source_qr.modules is None:
+            raise QrDecodeError(
+                "兼容模式需要从原图恢复完整模块矩阵，但当前图片只能解出内容；"
+                "请换用更清晰的原图，或改用干净重建模式"
+            )
+        decoded = source_qr
+    else:
+        decoded = regenerate_clean_qr(source_qr.payload)
+    if decoded.modules is None or decoded.version is None:  # pragma: no cover
+        raise QrDecodeError("内部错误：二维码模块矩阵缺失")
     bead_grid = build_bead_grid(
         decoded.modules,
         config.quiet_zone_modules,
@@ -276,6 +358,7 @@ def convert_qr_to_blueprint(
         light_code=palette.light.code,
         dark_hex=palette.dark.hex,
         light_hex=palette.light.hex,
+        error_correction=decoded.error_correction,
     )
 
 
@@ -315,14 +398,21 @@ def _write_metadata(
     # 隐私规则：元数据只保留摘要，不落盘支付宝收款链接明文。
     metadata = {
         "source_qr_version": source_qr.version,
-        "source_qr_module_size": int(source_qr.modules.shape[0]),
+        "source_qr_module_size": (
+            None if source_qr.modules is None else int(source_qr.modules.shape[0])
+        ),
+        "source_modules_available": source_qr.modules is not None,
         "matrix_mode": (
             "preserve_source_modules"
             if config.preserve_source_modules
-            else "regenerated_error_correction_h"
+            else f"regenerated_error_correction_{decoded.error_correction.lower()}"
         ),
         "qr_version": decoded.version,
         "qr_module_size": int(decoded.modules.shape[0]),
+        "error_correction": decoded.error_correction,
+        "error_correction_degraded": (
+            decoded.error_correction not in {"H", "source"}
+        ),
         "quiet_zone_modules": config.quiet_zone_modules,
         "beads_per_module": config.beads_per_module,
         "bead_grid_size": bead_grid_size,

@@ -9,9 +9,11 @@ from fastapi.testclient import TestClient
 
 from qr_bead_blueprint.core import (
     BlueprintConfig,
+    QrCapacityError,
     QrDecodeError,
     convert_qr_to_blueprint,
     qr_version_from_size,
+    regenerate_clean_qr,
     verify_rendered_qr,
 )
 from qr_bead_blueprint.palettes import available_palettes, match_palette_pair
@@ -94,6 +96,138 @@ def test_verification_falls_back_to_zxing(
     monkeypatch.setattr("qr_bead_blueprint.core.cv2.QRCodeDetector", EmptyOpenCvDetector)
 
     assert verify_rendered_qr(preview, payload) is True
+
+
+def test_input_decode_falls_back_to_zxing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenCV 解不出的大版本码，不应被直接拒收（实测 v18/v24/v27 会失败）。"""
+    payload = "https://qr.alipay.com/" + "c" * 170
+    source = tmp_path / "large-code.png"
+    qr = qrcode.QRCode(
+        version=24,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        border=4,
+        box_size=8,
+    )
+    qr.add_data(payload)
+    qr.make(fit=False)
+    qr.make_image().save(source)
+
+    class EmptyOpenCvDetector:
+        def detectAndDecode(self, _image):
+            return "", None, None
+
+    monkeypatch.setattr("qr_bead_blueprint.core.cv2.QRCodeDetector", EmptyOpenCvDetector)
+
+    output = tmp_path / "result"
+    result = convert_qr_to_blueprint(source, output, BlueprintConfig(beads_per_module=1))
+
+    assert result.scan_verified is True
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["source_modules_available"] is False
+    assert metadata["source_qr_version"] is None
+
+
+def test_long_payload_survives_when_opencv_cannot_decode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """回归用例：长内容 + OpenCV 解不出，之前会直接 422，现在应完整生成。"""
+    payload = "https://qr.alipay.com/" + "a" * 1400
+    source = tmp_path / "long-code.png"
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        border=4,
+        box_size=30,
+    )
+    qr.add_data(payload)
+    qr.make(fit=True)
+    qr.make_image().save(source)
+
+    class EmptyOpenCvDetector:
+        def detectAndDecode(self, _image):
+            return "", None, None
+
+    monkeypatch.setattr("qr_bead_blueprint.core.cv2.QRCodeDetector", EmptyOpenCvDetector)
+
+    output = tmp_path / "result"
+    result = convert_qr_to_blueprint(source, output, BlueprintConfig(beads_per_module=1))
+
+    assert result.scan_verified is True
+    assert result.error_correction in {"Q", "M", "L"}
+    metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["error_correction_degraded"] is True
+    assert payload not in (output / "metadata.json").read_text(encoding="utf-8")
+
+
+def test_preserve_mode_requires_module_matrix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "code.png"
+    qrcode.make("https://example.com/pay?id=no-matrix").save(source)
+
+    class EmptyOpenCvDetector:
+        def detectAndDecode(self, _image):
+            return "", None, None
+
+    monkeypatch.setattr("qr_bead_blueprint.core.cv2.QRCodeDetector", EmptyOpenCvDetector)
+
+    with pytest.raises(QrDecodeError, match="兼容模式"):
+        convert_qr_to_blueprint(
+            source,
+            tmp_path / "out",
+            BlueprintConfig(preserve_source_modules=True),
+        )
+
+
+def test_regenerate_degrades_error_correction_for_long_payload() -> None:
+    """H 级放不下的长链接应降级重建，而不是整体失败。"""
+    decoded = regenerate_clean_qr("https://qr.alipay.com/" + "a" * 1400)
+    assert decoded.error_correction in {"Q", "M", "L"}
+    assert decoded.modules is not None
+    assert decoded.version is not None and decoded.version <= 40
+
+
+def test_regenerate_rejects_payload_beyond_lowest_level() -> None:
+    with pytest.raises(QrCapacityError, match="低纠错等级"):
+        regenerate_clean_qr("https://qr.alipay.com/" + "a" * 4000)
+
+
+def test_auto_mode_falls_back_to_preserve_on_capacity_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """内容超出 H 级容量时，应自动降级到兼容模式而不是返回 422/500。"""
+    from web_app import _convert_with_fallback
+
+    source = tmp_path / "code.png"
+    qrcode.make("https://example.com/pay?id=capacity").save(source)
+
+    def raise_capacity(_payload: str):
+        raise QrCapacityError("模拟容量溢出")
+
+    monkeypatch.setattr(
+        "qr_bead_blueprint.core.regenerate_clean_qr",
+        raise_capacity,
+    )
+
+    _result, _result_dir, used_mode = _convert_with_fallback(
+        upload_path=source,
+        root=tmp_path / "job",
+        beads_per_module=1,
+        bead_size_mm=5.0,
+        dark_color="#111827",
+        light_color="#FFFFFF",
+        palette="mard-221",
+        compatibility_mode="auto",
+        allow_low_contrast=False,
+    )
+
+    assert used_mode == "preserve"
 
 
 def test_web_generation_and_direct_downloads(tmp_path: Path) -> None:

@@ -75,6 +75,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print("生成成功，并已通过自动扫码复验。")
     print(f"QR 版本：Version {result.version}（{result.module_size}×{result.module_size} 模块）")
+    correction_label = (
+        "沿用平台原码（未解析等级）"
+        if result.error_correction == "source"
+        else result.error_correction
+    )
+    print(f"纠错等级：{correction_label}")
     print(f"拼豆图纸：{result.bead_grid_size}×{result.bead_grid_size} 颗")
     print(f"深色拼豆：{result.dark_beads} 颗")
     print(f"浅色拼豆：{result.light_beads} 颗")
@@ -84,5 +90,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"成品尺寸：约 {result.physical_size_mm / 10:.1f}×{result.physical_size_mm / 10:.1f} cm")
     print(f"二维码摘要：{result.payload_sha256[:16]}…（不保存明文）")
     print(f"输出目录：{result.output_dir}")
+    if result.error_correction in {"Q", "M", "L"}:
+        print(
+            f"注意：内容较长，纠错等级已降为 {result.error_correction} 级；"
+            "实物请使用每模块 2×2 颗并充分实测。"
+        )
     return 0
 
